@@ -1,0 +1,15 @@
+graph TD
+    User([User]) -->|REST/WebSockets| API(FastAPI Backend)
+    
+    subgraph Core System
+        API <--> Orchestrator(LangGraph Orchestrator)
+        Orchestrator <--> StateDB[(Redis/PG Memory)]
+        Orchestrator <--> ToolLayer(Tool Executor)
+        Orchestrator <--> RAG(Retriever Engine)
+    end
+    
+    ToolLayer <--> ExtAPI(External Travel APIs)
+    RAG <--> VectorDB[(Vector DB / Qdrant)]
+    Orchestrator <--> LLM(LLM API)
+    
+    Observability(LangSmith / Prometheus) -.-> CoreSystem
