@@ -1,0 +1,19 @@
+stateDiagram-v2
+    [*] --> ExtractIntent
+    
+    ExtractIntent --> ValidateConstraints
+    ValidateConstraints --> UserError: Budget too low
+    UserError --> [*]
+    
+    ValidateConstraints --> FetchFlights: OK
+    FetchFlights --> FetchHotels
+    FetchHotels --> FetchAttractions
+    
+    FetchAttractions --> GenerateItinerary
+    
+    GenerateItinerary --> BudgetCheckGuardrail
+    
+    BudgetCheckGuardrail --> GenerateItinerary: Budget exceeded (Retry)
+    BudgetCheckGuardrail --> FinalReview: Pass
+    
+    FinalReview --> [*]
