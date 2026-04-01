@@ -1,0 +1,20 @@
+sequenceDiagram
+    participant U as User
+    participant G as Gateway
+    participant S as State/Memory
+    participant A as Agent (LLM)
+    participant T as Tools (API)
+
+    U->>G: "Рим на 3 дня, 800 EUR"
+    G->>S: Init thread_id, state
+    G->>A: Extract params
+    A-->>S: Save {dest: Rome, days: 3, budget: 800}
+    A->>T: search_flights(Rome, dates)
+    T-->>A: JSON (top 3 flights)
+    A-->>S: Update state (budget left: 500)
+    A->>T: search_hotels(Rome, dates)
+    T-->>A: JSON (top 3 hotels)
+    A-->>S: Update state (budget left: 200)
+    A->>A: Generate Markdown Itinerary
+    A->>G: Result
+    G->>U: Final Travel Plan
