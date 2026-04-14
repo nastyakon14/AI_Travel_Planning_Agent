@@ -1,21 +1,25 @@
-# Serving, Config & Deployment
+# Serving и конфигурация
 
-## Запуск
-- **Backend:** FastAPI (асинхронные эндпоинты `POST /chat`, `GET /status`).
-- **Изоляция:** Docker и `docker-compose.yml`. Поднимает сразу 3 сервиса:
-  1. FastAPI App (сам агент).
-  2. Redis (для сохранения `MemorySaver` стейта).
-  3. Qdrant (для векторного поиска).
+## Компоненты
 
-## Конфигурация (Environment Variables)
-Все секреты передаются строго через `.env` файл (не коммитится в репозиторий).
-Ключевые переменные:
-- `OPENAI_API_KEY`
-- `AMADEUS_API_KEY` (или аналогичный для авиа)
-- `REDIS_URL`
-- `LANGCHAIN_TRACING_V2` (включение трейсинга)
-- `LANGCHAIN_API_KEY`
+- **UI:** Streamlit, `streamlit run streamlit_app.py` (см. `Dockerfile.ui`).
+- **Compose:** `docker compose up` поднимает только сервис **`ui`**; LangGraph и LLM выполняются в процессе Streamlit.
 
-## Версионирование моделей (Critical Guardrail)
-Запрещено использовать "плавающие" теги моделей вроде `gpt-4o` или `gpt-4o-mini`. 
-Модели **жестко фиксируются** на конкретные снапшоты (например, `gpt-4o-mini-2024-07-18`). Это гарантирует, что внезапное обновление весов модели на стороне OpenAI не сломает наши системные промпты, структуру JSON-выводов и вызовы функций (Tool Calling) без нашего ведома.
+Персистентность графа в PoC — in-memory (`MemorySaver`).
+
+## Переменные окружения (основные)
+
+| Переменная | Назначение |
+|------------|------------|
+| `AGENTPLATFORM_API_KEY` / `OPENAI_API_KEY` | Ключ к LLM API |
+| `AGENTPLATFORM_API_BASE` | Базовый URL OpenAI-compatible API (`.../v1`) |
+| `TRAVELPAYOUTS_API_TOKEN` | Токен Travelpayouts |
+| `TRIP_EXTRACTION_FAST_MODEL`, `TRIP_EXTRACTION_STRONG_MODEL` | Имена моделей на шлюзе |
+| `EXTRACTION_COMPLEX_FIRST` | `1` — сначала «сильная» модель для сложных запросов |
+| `TRAVEL_GUARDRAIL_MAX_RETRIES` | Лимит ретраев бюджета в графе |
+
+Секреты не коммитить; используйте `.env` локально.
+
+## Версии моделей
+
+Имена моделей задаются через env и должны совпадать с ответом `GET …/v1/models` у вашего шлюза.

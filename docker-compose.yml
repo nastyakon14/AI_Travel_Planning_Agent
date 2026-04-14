@@ -1,0 +1,16 @@
+# Streamlit + backend в одном процессе. LLM — напрямую (ChatOpenAI → AGENTPLATFORM_API_BASE).
+# Запуск: docker compose up --build
+
+services:
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    ports:
+      - "${UI_PORT:-8501}:8501"
+    environment:
+      AGENTPLATFORM_API_KEY: ${AGENTPLATFORM_API_KEY}
+      AGENTPLATFORM_API_BASE: ${AGENTPLATFORM_API_BASE:-https://litellm.tokengate.ru/v1}
+      TRAVELPAYOUTS_API_TOKEN: ${TRAVELPAYOUTS_API_TOKEN}
+      TRIP_EXTRACTION_FAST_MODEL: ${TRIP_EXTRACTION_FAST_MODEL:-gpt-4o-mini}
+      TRIP_EXTRACTION_STRONG_MODEL: ${TRIP_EXTRACTION_STRONG_MODEL:-gpt-4o}

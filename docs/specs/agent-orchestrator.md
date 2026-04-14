@@ -1,21 +1,26 @@
-#  Agent & Orchestrator (LangGraph)
+# Agent & Orchestrator (LangGraph)
 
 ## Роль
-Ядро принятия решений. Управляет последовательностью действий, вызывает инструменты, маршрутизирует логику и валидирует результаты (Guardrails).
 
-## Шаги (Nodes графа)
-1. **`Extract`**: Парсинг запроса пользователя в структурированные требования (JSON).
-2. **`Plan`**: Составление плана поиска (какие города и даты искать).
-3. **`Execute`**: Параллельный вызов Flight Tool и Hotel Tool.
-4. **`Generate`**: Написание пошагового маршрута.
-5. **`Guardrail (Validate)`**: Строгая программная проверка результата (бюджет, наличие обязательных полей).
+Ядро — скомпилированный граф в `backend/agent_graph.py` (`build_graph()` → `compile(checkpointer=MemorySaver())`).
 
-## Правила переходов (Conditional Edges)
-- После шага `Generate` управление всегда переходит в узел `Guardrail`. 
-- Если `current_cost > requirements["budget"]`, граф по условному ребру возвращается на шаг `Execute` с системным сообщением: *"Бюджет превышен. Найди отели с рейтингом ниже, но дешевле"*.
-- Если проверки пройдены — переход в узел `END`.
+## Узлы (реализация)
 
-## Stop Condition и Retry Limit
-- **Условие успешной остановки:** План сгенерирован И бюджет не превышен.
-- **Защита от бесконечного цикла (Infinite Loop):** Максимальное количество проходов по циклу `Generate -> Guardrail` равно **3**. 
-- При достижении лимита ретраев граф принудительно завершается и выдает пользователю лучший из найденных вариантов с красной пометкой: *"Внимание: не удалось уложиться в заданный бюджет"*.
+| Узел | Функция | Содержание |
+|------|---------|------------|
+| `extract` | `node_extract` | Guardrails на ввод → `extract_trip_query()` → `requirements` + `extraction_meta`. |
+| `validate` | `node_validate` | Эвристика: бюджет слишком мал для длительности → `early_exit`. |
+| `fetch_data` | `node_fetch_data` | По `detect_search_scope`: рейсы (`search_routes_from_extracted`), отели (`search_hotels_from_extracted`), достопримечательности (`suggest_city_attractions`). Учитывает `budget_multiplier` при ретраях. |
+| `generate` | `node_generate` | `generate_travel_itinerary.invoke(...)` → `itinerary_md`. |
+| `guardrail` | `node_guardrail` | Оценка перелёт + отель×ночи vs `budget`; `guardrail_pass`. |
+| `retry_patch` | `node_retry_patch` | `guardrail_retries += 1`, `budget_multiplier *= 0.85`. |
+| `finalize` / `finalize_warn` | `node_finalize` | Сборка `final_markdown`, предупреждение при исчерпании ретраев. |
+
+## Условные переходы
+
+- После `validate`: при `early_exit` → `finalize`, иначе → `fetch_data`.
+- После `guardrail`: успех → `finalize`; провал и retries < max → `retry_patch` → снова `fetch_data`; провал и retries ≥ max → `finalize_warn`.
+
+## Лимит ретраев
+
+`TRAVEL_GUARDRAIL_MAX_RETRIES` (по умолчанию 3) — см. `run_travel_planning_graph`.

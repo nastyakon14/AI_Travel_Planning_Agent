@@ -1,6 +1,7 @@
-graph TD
-    User([User]) -->|Text request/constraints| TAS[Travel Agent System]
-    TAS -->|Markdown Travel Plan| User
-    TAS -.->|Flight Search| F_API[Flights API / Amadeus]
-    TAS -.->|Hotel Search| H_API[Hotels API / Booking]
-    TAS -.->|Query| LLM_API[LLM Provider / OpenAI]
+graph LR
+    User([Пользователь]) --> UI[Streamlit UI]
+    User --> HTTP[REST API]
+    UI --> Core[Travel Planning backend]
+    HTTP --> Core
+    Core --> TP[Travelpayouts / Aviasales API]
+    Core --> LLM[OpenAI-compatible LLM API]

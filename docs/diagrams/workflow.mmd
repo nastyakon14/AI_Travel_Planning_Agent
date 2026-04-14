@@ -1,19 +1,13 @@
 stateDiagram-v2
-    [*] --> ExtractIntent
-    
-    ExtractIntent --> ValidateConstraints
-    ValidateConstraints --> UserError: Budget too low
-    UserError --> [*]
-    
-    ValidateConstraints --> FetchFlights: OK
-    FetchFlights --> FetchHotels
-    FetchHotels --> FetchAttractions
-    
-    FetchAttractions --> GenerateItinerary
-    
-    GenerateItinerary --> BudgetCheckGuardrail
-    
-    BudgetCheckGuardrail --> GenerateItinerary: Budget exceeded (Retry)
-    BudgetCheckGuardrail --> FinalReview: Pass
-    
-    FinalReview --> [*]
+    [*] --> extract
+    extract --> validate
+    validate --> finalize: early_exit
+    validate --> fetch_data: ok
+    fetch_data --> generate
+    generate --> guardrail
+    guardrail --> finalize: guardrail_pass
+    guardrail --> retry_patch: fail and retries left
+    guardrail --> finalize_warn: fail and max retries
+    retry_patch --> fetch_data
+    finalize --> [*]
+    finalize_warn --> [*]

@@ -1,0 +1,10 @@
+streamlit
+langchain-openai
+langchain-core
+langgraph
+pydantic
+requests
+pandas
+plotly
+folium>=0.16.0
+streamlit-folium>=0.18.0

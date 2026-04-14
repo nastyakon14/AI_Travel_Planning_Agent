@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Pytest
+        run: python -m pytest tests/ -v
+
+      - name: Import LangGraph
+        run: PYTHONPATH=. python -c "from backend.agent_graph import build_graph; g = build_graph(); assert g is not None"
