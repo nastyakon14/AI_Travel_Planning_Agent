@@ -21,6 +21,7 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 
 try:
+    from .llm_observability import stream_plain_text
     from .travel_agent import (
         FAST_EXTRACTION_MODEL,
         OPENAI_API_KEY,
@@ -32,6 +33,7 @@ try:
         suggest_city_attractions,
     )
 except ImportError:  # pragma: no cover
+    from llm_observability import stream_plain_text
     from travel_agent import (
         FAST_EXTRACTION_MODEL,
         OPENAI_API_KEY,
@@ -389,12 +391,14 @@ def generate_travel_itinerary(
             timeout=float(os.getenv("LLM_TIMEOUT_SEC", "120")),
             max_retries=int(os.getenv("LLM_MAX_RETRIES", "3")),
         )
-        msg = llm.invoke(prompt)
-        text = msg.content if hasattr(msg, "content") else str(msg)
+        text, llm_metrics = stream_plain_text(
+            llm, prompt, stage="travel_itinerary"
+        )
         return {
             "itinerary_markdown": text,
             "model": model_name,
             "error": None,
+            "llm_metrics": llm_metrics,
         }
     except Exception as exc:
         return {

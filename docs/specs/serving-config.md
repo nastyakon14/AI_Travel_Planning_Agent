@@ -2,7 +2,7 @@
 
 ## Компоненты
 
-- **UI:** Streamlit, `streamlit run streamlit_app.py` (см. `Dockerfile.ui`).
+- **UI:** Streamlit, `streamlit run streamlit_app.py` (см. `Dockerfile` в корне репозитория).
 - **Compose:** `docker compose up` поднимает только сервис **`ui`**; LangGraph и LLM выполняются в процессе Streamlit.
 
 Персистентность графа в PoC — in-memory (`MemorySaver`).

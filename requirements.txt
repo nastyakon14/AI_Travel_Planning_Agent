@@ -8,3 +8,7 @@ pandas
 plotly
 folium>=0.16.0
 streamlit-folium>=0.18.0
+pytest>=8.0.0
+prometheus-client>=0.20.0
+psutil>=6.0.0
+langfuse>=2.0.0

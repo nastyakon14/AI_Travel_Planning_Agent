@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import uuid
 from datetime import datetime
@@ -13,7 +14,7 @@ import streamlit as st
 
 from backend.auth_streamlit import ensure_session_user
 from backend.context_memory import format_conversation_for_extraction
-from backend.guardrails import GuardrailViolation
+from backend.guardrails import GuardrailViolation, sanitize_user_input
 from backend.hotels import normalize_hotel_guest_rating
 from backend.travel_agent import (
     FAST_EXTRACTION_MODEL,
@@ -31,6 +32,20 @@ from backend.travel_facade import (
     search_routes_from_extracted,
     suggest_city_attractions,
 )
+
+_log = logging.getLogger(__name__)
+if os.getenv("PROMETHEUS_METRICS_PORT", "").strip() or os.getenv("PROMETHEUS_ENABLE", "").lower() in (
+    "1",
+    "true",
+    "yes",
+):
+    try:
+        from backend.prometheus_metrics import start_metrics_server
+
+        _mp = int(os.getenv("PROMETHEUS_METRICS_PORT", "9090"))
+        start_metrics_server(_mp)
+    except Exception as exc:  # pragma: no cover
+        _log.warning("Prometheus /metrics not started: %s", exc)
 
 DEFAULT_MAX_RESULTS = max(1, min(int(os.getenv("MAX_RESULTS_DEFAULT", "5")), 10))
 
@@ -139,6 +154,26 @@ def _format_hotel_rating(value: Any) -> str:
     if n <= 0:
         return "н/д"
     return f"{n:g}/10"
+
+
+def _render_llm_metrics_expanders(
+    *,
+    extraction: dict[str, Any] | None = None,
+    attractions: dict[str, Any] | None = None,
+    itinerary: dict[str, Any] | None = None,
+) -> None:
+    """Показывает TTFT, TPOT, токены и оценку стоимости по этапам (если есть)."""
+    bundle: dict[str, Any] = {}
+    if extraction:
+        bundle["extraction"] = extraction
+    if attractions:
+        bundle["attractions"] = attractions
+    if itinerary:
+        bundle["itinerary"] = itinerary
+    if not bundle:
+        return
+    with st.expander("LLM: TTFT / TPOT / токены / стоимость"):
+        st.json(bundle)
 
 
 def _format_hotel_stars(value: Any) -> str:
@@ -832,6 +867,12 @@ def main() -> None:
     }
 
     effective_user_text = user_text if text_mode else _build_manual_user_text(manual_filters, manual_scope_label)
+    try:
+        effective_user_text = sanitize_user_input(effective_user_text)
+    except GuardrailViolation as exc:
+        st.warning(str(exc))
+        return
+
     conversation_context = (
         format_conversation_for_extraction(st.session_state.messages) if text_mode else None
     )
@@ -854,11 +895,27 @@ def main() -> None:
                         user_id=user_id,
                     )
                 st.markdown(lg_result.get("final_markdown") or "_Нет текста результата_")
+                em = lg_result.get("extraction_meta") or {}
+                _render_llm_metrics_expanders(
+                    extraction=em.get("extraction_llm_metrics"),
+                    attractions=(lg_result.get("attractions_result") or {}).get("llm_metrics"),
+                    itinerary=lg_result.get("itinerary_llm_metrics"),
+                )
             st.session_state.messages.append(
                 {
                     "role": "assistant",
                     "content": lg_result.get("final_markdown") or "",
                     "meta": "langgraph | agent_graph.run_travel_planning_graph",
+                }
+            )
+        except GuardrailViolation as exc:
+            with st.chat_message("assistant"):
+                st.warning(str(exc))
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": str(exc),
+                    "meta": f"guardrail ({getattr(exc, 'code', '')})",
                 }
             )
         except Exception as exc:
@@ -891,6 +948,9 @@ def main() -> None:
                         f"{extraction_meta.get('used_model', 'unknown')} | "
                         f"fallback: {extraction_meta.get('used_fallback', False)} | "
                         f"reason: {extraction_meta.get('fallback_reason')}"
+                    )
+                    _render_llm_metrics_expanders(
+                        extraction=extraction_meta.get("extraction_llm_metrics"),
                     )
                     # with st.expander("JSON извлеченных сущностей"):
                     #     st.json(extracted.model_dump())

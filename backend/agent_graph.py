@@ -50,6 +50,7 @@ class TravelPlanningState(TypedDict, total=False):
     user_id: str | None
     requirements: dict[str, Any]
     extraction_meta: dict[str, Any]
+    itinerary_llm_metrics: dict[str, Any] | None
     default_origin_city: str | None
     default_destination_city: str | None
     default_origin_iata: str | None
@@ -92,6 +93,8 @@ def _apply_budget_multiplier(rq: TripQuery, multiplier: float) -> TripQuery:
 
 
 def node_extract(state: TravelPlanningState) -> dict[str, Any]:
+    from backend.langfuse_tracing import langfuse_span
+
     if not OPENAI_API_KEY:
         return {
             "error": "Нет AGENTPLATFORM_API_KEY / OPENAI_API_KEY",
@@ -106,50 +109,76 @@ def node_extract(state: TravelPlanningState) -> dict[str, Any]:
             "early_exit": True,
             "early_exit_message": str(exc),
         }
-    try:
-        extracted, meta = extract_trip_query(
-            raw_in,
-            return_metadata=True,
-            conversation_context=state.get("conversation_context"),
-            user_id=state.get("user_id"),
-        )
-    except Exception as exc:
-        return {
-            "error": f"{type(exc).__name__}: {exc}",
-            "early_exit": True,
-            "early_exit_message": f"Ошибка извлечения: {exc}",
-        }
-    return {
-        "requirements": extracted.model_dump(),
-        "extraction_meta": meta,
-        "early_exit": False,
-    }
+
+    with langfuse_span(
+        "extract_intent",
+        metadata={
+            "input_preview": state["user_input"][:100],
+            "user_id": state.get("user_id"),
+        },
+    ) as span_ctx:
+        try:
+            extracted, meta = extract_trip_query(
+                raw_in,
+                return_metadata=True,
+                conversation_context=state.get("conversation_context"),
+                user_id=state.get("user_id"),
+            )
+            result = {
+                "requirements": extracted.model_dump(),
+                "extraction_meta": meta,
+                "early_exit": False,
+            }
+            span_ctx["result"] = {
+                "origin": extracted.origin_city,
+                "destination": extracted.destination_city,
+                "budget": extracted.budget,
+                "passengers": extracted.passengers,
+            }
+            return result
+        except Exception as exc:
+            span_ctx["result"] = {"error": str(exc)}
+            return {
+                "error": f"{type(exc).__name__}: {exc}",
+                "early_exit": True,
+                "early_exit_message": f"Ошибка извлечения: {exc}",
+            }
 
 
 def node_validate(state: TravelPlanningState) -> dict[str, Any]:
+    from backend.langfuse_tracing import langfuse_span
+
     if state.get("early_exit") or not state.get("requirements"):
         return {}
-    rq = TripQuery.model_validate(state["requirements"])
-    days = max(1, _nights_from_query(rq))
-    budget = float(rq.budget or 0)
-    dest = (rq.destination_city or rq.destination_country or "город").strip()
-    currency = (rq.currency or "EUR").upper()
-    min_suggested = 30.0 * days if currency == "EUR" else 3000.0 * days
-    ok = budget <= 0 or budget >= min_suggested * 0.12
-    if not ok:
-        return {
-            "early_exit": True,
-            "early_exit_message": (
-                f"Бюджет {budget} {currency} выглядит слишком низким для поездки ~{days} дн. в «{dest}». "
-                "Увеличьте бюджет или сократите срок."
-            ),
-        }
-    return {"early_exit": False}
+
+    with langfuse_span("validate_constraints", metadata={"has_requirements": bool(state.get("requirements"))}) as span_ctx:
+        rq = TripQuery.model_validate(state["requirements"])
+        days = max(1, _nights_from_query(rq))
+        budget = float(rq.budget or 0)
+        dest = (rq.destination_city or rq.destination_country or "город").strip()
+        currency = (rq.currency or "EUR").upper()
+        min_suggested = 30.0 * days if currency == "EUR" else 3000.0 * days
+        ok = budget <= 0 or budget >= min_suggested * 0.12
+
+        if not ok:
+            span_ctx["result"] = {"valid": False, "reason": "budget_too_low"}
+            return {
+                "early_exit": True,
+                "early_exit_message": (
+                    f"Бюджет {budget} {currency} выглядит слишком низким для поездки ~{days} дн. в «{dest}». "
+                    "Увеличьте бюджет или сократите срок."
+                ),
+            }
+        span_ctx["result"] = {"valid": True, "days": days, "budget": budget}
+        return {"early_exit": False}
 
 
 def node_fetch_data(state: TravelPlanningState) -> dict[str, Any]:
+    from backend.langfuse_tracing import langfuse_span
+
     if state.get("early_exit"):
         return {}
+
     rq = TripQuery.model_validate(state["requirements"])
     bm = float(state.get("budget_multiplier") or 1.0)
     rq = _apply_budget_multiplier(rq, bm)
@@ -162,43 +191,70 @@ def node_fetch_data(state: TravelPlanningState) -> dict[str, Any]:
     default_dest = state.get("default_destination_city")
     default_oi = state.get("default_origin_iata")
 
-    out: dict[str, Any] = {}
+    # Метрика search_scope
+    try:
+        from backend.prometheus_metrics import search_scope_counter
+        search_scope_counter.labels(scope=scope).inc()
+    except ImportError:
+        pass
 
-    if scope in ("flights", "both"):
-        try:
-            out["flights_result"] = search_routes_from_extracted(
-                user_request=user_request,
-                extracted=rq,
-                extraction_meta=em,
-                default_origin_city=default_origin,
-                default_origin_iata=default_oi,
-                max_results=max_r,
-            )
-        except Exception as exc:
-            out["flights_result"] = {"routes": [], "error": str(exc), "route_not_found_message": str(exc)}
+    with langfuse_span(
+        "fetch_data",
+        metadata={
+            "scope": scope,
+            "destination": rq.destination_city,
+            "budget_multiplier": bm,
+        },
+    ) as span_ctx:
+        out: dict[str, Any] = {}
 
-    if scope in ("hotels", "both"):
-        try:
-            out["hotels_result"] = search_hotels_from_extracted(
-                user_request=user_request,
-                extracted=rq,
-                extraction_meta=em,
-                default_destination_city=default_dest,
-                max_results=max_r,
-            )
-        except Exception as exc:
-            out["hotels_result"] = {"hotels": [], "error": str(exc)}
+        if scope in ("flights", "both"):
+            try:
+                out["flights_result"] = search_routes_from_extracted(
+                    user_request=user_request,
+                    extracted=rq,
+                    extraction_meta=em,
+                    default_origin_city=default_origin,
+                    default_origin_iata=default_oi,
+                    max_results=max_r,
+                )
+            except Exception as exc:
+                out["flights_result"] = {"routes": [], "error": str(exc), "route_not_found_message": str(exc)}
 
-    label, country = destination_label_for_attractions(rq, default_dest)
-    if label:
-        out["attractions_result"] = suggest_city_attractions(label, country, max_items=8)
+        if scope in ("hotels", "both"):
+            try:
+                out["hotels_result"] = search_hotels_from_extracted(
+                    user_request=user_request,
+                    extracted=rq,
+                    extraction_meta=em,
+                    default_destination_city=default_dest,
+                    max_results=max_r,
+                )
+            except Exception as exc:
+                out["hotels_result"] = {"hotels": [], "error": str(exc)}
+
+        label, country = destination_label_for_attractions(rq, default_dest)
+        if label:
+            try:
+                out["attractions_result"] = suggest_city_attractions(label, country, max_items=8)
+            except Exception as exc:
+                out["attractions_result"] = {"attractions": [], "error": str(exc)}
+
+        span_ctx["result"] = {
+            "flights_count": len(out.get("flights_result", {}).get("routes", [])),
+            "hotels_count": len(out.get("hotels_result", {}).get("hotels", [])),
+            "attractions_count": len(out.get("attractions_result", {}).get("attractions", [])),
+        }
 
     return out
 
 
 def node_generate(state: TravelPlanningState) -> dict[str, Any]:
+    from backend.langfuse_tracing import langfuse_span
+
     if state.get("early_exit"):
         return {}
+
     rq = TripQuery.model_validate(state["requirements"])
     dest = (
         rq.destination_city
@@ -230,41 +286,62 @@ def node_generate(state: TravelPlanningState) -> dict[str, Any]:
             )
     user_notes = "; ".join(notes_parts)
 
-    try:
-        raw = generate_travel_itinerary.invoke(
-            {
-                "destination_city": str(dest),
-                "days": days,
-                "attractions": names[:12],
-                "user_notes": user_notes,
-            }
-        )
-    except Exception as exc:
-        return {"itinerary_md": f"(Ошибка генерации маршрута: {exc})", "itinerary_error": str(exc)}
+    with langfuse_span(
+        "generate_itinerary",
+        metadata={
+            "destination": str(dest),
+            "days": days,
+            "attractions_count": len(names),
+        },
+    ) as span_ctx:
+        try:
+            raw = generate_travel_itinerary.invoke(
+                {
+                    "destination_city": str(dest),
+                    "days": days,
+                    "attractions": names[:12],
+                    "user_notes": user_notes,
+                }
+            )
+        except Exception as exc:
+            span_ctx["result"] = {"error": str(exc)}
+            return {"itinerary_md": f"(Ошибка генерации маршрута: {exc})", "itinerary_error": str(exc)}
 
-    md = raw.get("itinerary_markdown") if isinstance(raw, dict) else None
-    return {
-        "itinerary_md": md or "",
-        "itinerary_model": raw.get("model") if isinstance(raw, dict) else None,
-    }
+        md = raw.get("itinerary_markdown") if isinstance(raw, dict) else None
+        llm_m = raw.get("llm_metrics") if isinstance(raw, dict) else None
+
+        span_ctx["result"] = {
+            "model": raw.get("model") if isinstance(raw, dict) else None,
+            "itinerary_length_chars": len(md or ""),
+        }
+        return {
+            "itinerary_md": md or "",
+            "itinerary_model": raw.get("model") if isinstance(raw, dict) else None,
+            "itinerary_llm_metrics": llm_m if isinstance(llm_m, dict) else None,
+        }
 
 
 def node_guardrail(state: TravelPlanningState) -> dict[str, Any]:
+    from backend.langfuse_tracing import langfuse_span
+
     if state.get("early_exit"):
         return {"guardrail_pass": True}
-    rq = TripQuery.model_validate(state["requirements"])
-    budget = rq.budget
-    if budget is None or budget <= 0:
-        return {"guardrail_pass": True, "budget_check": {"skipped": True}}
 
-    nights = _nights_from_query(rq)
-    fr = state.get("flights_result") or {}
-    hr = state.get("hotels_result") or {}
-    routes = fr.get("routes") or []
-    hotels = hr.get("hotels") or []
+    with langfuse_span("budget_guardrail") as span_ctx:
+        rq = TripQuery.model_validate(state["requirements"])
+        budget = rq.budget
+        if budget is None or budget <= 0:
+            span_ctx["result"] = {"skipped": True}
+            return {"guardrail_pass": True, "budget_check": {"skipped": True}}
 
-    fp = float(routes[0].get("price") or 0) if routes else 0.0
-    hp = 0.0
+        nights = _nights_from_query(rq)
+        fr = state.get("flights_result") or {}
+        hr = state.get("hotels_result") or {}
+        routes = fr.get("routes") or []
+        hotels = hr.get("hotels") or []
+
+        fp = float(routes[0].get("price") or 0) if routes else 0.0
+        hp = 0.0
     for h in hotels:
         if h.get("is_search_portal_only"):
             continue
@@ -282,6 +359,15 @@ def node_guardrail(state: TravelPlanningState) -> dict[str, Any]:
         total = fp + hp * nights
 
     passed = total <= float(budget) * 1.03
+
+    span_ctx["result"] = {
+        "passed": passed,
+        "total_estimated": round(total, 2),
+        "budget": float(budget),
+        "flight_part": fp,
+        "hotel_part": round(hp * nights, 2),
+    }
+
     return {
         "guardrail_pass": passed,
         "budget_check": {
@@ -329,7 +415,17 @@ def node_finalize(state: TravelPlanningState) -> dict[str, Any]:
     elif gp is False:
         parts.append("\n\n> Бюджет превышен; выполнена повторная попытка с более жёстким лимитом по отелям.")
 
-    return {"final_markdown": "\n\n".join(parts).strip()}
+    # Собираем данные для бизнес-метрик
+    rq = state.get("requirements") or {}
+    total_cost = bc.get("total_estimated") if bc and not bc.get("skipped") else None
+
+    return {
+        "final_markdown": "\n\n".join(parts).strip(),
+        "query": rq,
+        "total_cost_usd": total_cost,
+        "retry_count": retries,
+        "llm_metrics": [state.get("itinerary_llm_metrics")] if state.get("itinerary_llm_metrics") else [],
+    }
 
 
 def route_after_validate(state: TravelPlanningState) -> Literal["fetch", "end"]:
@@ -393,6 +489,7 @@ def run_travel_planning_graph(
     thread_id: str = "default",
     conversation_context: str | None = None,
     user_id: str | None = None,
+    langchain_callbacks: list | None = None,
 ) -> dict[str, Any]:
     """Запуск полного графа планирования (см. thread_id для изоляции сессий в MemorySaver)."""
     graph = get_compiled_travel_graph()
@@ -408,5 +505,7 @@ def run_travel_planning_graph(
         "budget_multiplier": 1.0,
         "max_guardrail_retries": int(os.getenv("TRAVEL_GUARDRAIL_MAX_RETRIES", "3")),
     }
-    cfg = {"configurable": {"thread_id": thread_id}}
+    cfg: dict[str, Any] = {"configurable": {"thread_id": thread_id}}
+    if langchain_callbacks:
+        cfg["callbacks"] = langchain_callbacks
     return graph.invoke(init, cfg)

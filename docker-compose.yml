@@ -1,16 +1,52 @@
 # Streamlit + backend в одном процессе. LLM — напрямую (ChatOpenAI → AGENTPLATFORM_API_BASE).
-# Запуск: docker compose up --build
+# Метрики Prometheus: ui:9090/metrics. Стек: docker compose --profile monitoring up --build
+# Запуск только UI: docker compose up --build
 
 services:
   ui:
     build:
       context: .
-      dockerfile: Dockerfile.ui
+      dockerfile: Dockerfile
     ports:
       - "${UI_PORT:-8501}:8501"
+      - "${METRICS_PORT:-9090}:9090"
     environment:
       AGENTPLATFORM_API_KEY: ${AGENTPLATFORM_API_KEY}
       AGENTPLATFORM_API_BASE: ${AGENTPLATFORM_API_BASE:-https://litellm.tokengate.ru/v1}
       TRAVELPAYOUTS_API_TOKEN: ${TRAVELPAYOUTS_API_TOKEN}
       TRIP_EXTRACTION_FAST_MODEL: ${TRIP_EXTRACTION_FAST_MODEL:-gpt-4o-mini}
       TRIP_EXTRACTION_STRONG_MODEL: ${TRIP_EXTRACTION_STRONG_MODEL:-gpt-4o}
+      PROMETHEUS_METRICS_PORT: "9090"
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-https://cloud.langfuse.com}
+
+  prometheus:
+    profiles: ["monitoring"]
+    image: prom/prometheus:v2.53.0
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    ports:
+      - "${PROMETHEUS_UI_PORT:-9091}:9090"
+    depends_on:
+      - ui
+
+  grafana:
+    profiles: ["monitoring"]
+    image: grafana/grafana:11.0.0
+    environment:
+      GF_USERS_DEFAULT_THEME: dark
+      # Без логина: анонимный доступ (только для доверенной сети / PoC)
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus

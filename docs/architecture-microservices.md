@@ -4,4 +4,4 @@
 
 LLM вызывается через **LangChain `ChatOpenAI`** с `base_url = AGENTPLATFORM_API_BASE` и ключом `AGENTPLATFORM_API_KEY` (см. `backend/travel_agent.py`).
 
-Docker: `docker compose up` — один сервис **`ui`** (`Dockerfile.ui`), без отдельного REST API.
+Docker: `docker compose up` — один сервис **`ui`** ([`Dockerfile`](../Dockerfile)), без отдельного REST API.

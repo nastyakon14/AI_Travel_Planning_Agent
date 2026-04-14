@@ -14,8 +14,10 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 try:
     from .guardrails import sanitize_user_input
+    from .llm_observability import stream_structured_output
 except ImportError:  # pragma: no cover
     from guardrails import sanitize_user_input
+    from llm_observability import stream_structured_output
 
 try:
     from .aviatickets import TravelPayoutsClient, filter_routes_by_budget
@@ -83,15 +85,10 @@ OPENAI_API_KEY = (
     or os.getenv("AGENTPLATFORM_KEY")
     or os.getenv("OPENAI_API_KEY")
 )
-# print(OPENAI_API_KEY)
-# print(OPENAI_URL)
 
 
 def _make_chat_llm(model: str, *, temperature: float = 0.0) -> ChatOpenAI:
     """OpenAI-compatible HTTP API (AGENTPLATFORM_API_BASE), без LiteLLM."""
-    # print(model)
-    # print(OPENAI_API_KEY)
-    # print(OPENAI_URL)
     return ChatOpenAI(
         model=model,
         temperature=temperature,
@@ -302,9 +299,12 @@ def suggest_city_attractions(
 
     try:
         llm = _make_chat_llm(model_name, temperature=0.25)
-        structured = llm.with_structured_output(CityAttractions)
-        parsed = structured.invoke(
-            [SystemMessage(content=system), HumanMessage(content=prompt)]
+        messages = [SystemMessage(content=system), HumanMessage(content=prompt)]
+        parsed, llm_metrics = stream_structured_output(
+            llm,
+            CityAttractions,
+            messages,
+            stage="city_attractions",
         )
         if not isinstance(parsed, CityAttractions):
             parsed = CityAttractions.model_validate(parsed)
@@ -319,6 +319,7 @@ def suggest_city_attractions(
             "attractions": items_out,
             "model": model_name,
             "error": None,
+            "llm_metrics": llm_metrics,
         }
     except Exception as exc:  # pragma: no cover - сеть / провайдер
         return {
@@ -634,7 +635,6 @@ def _invoke_extractor_model(
     """Извлечение TripQuery через OpenAI-compatible API (ChatOpenAI → AGENTPLATFORM_API_BASE)."""
     _ = user_id  # зарезервировано для трейсинга / метаданных
     llm = _make_chat_llm(model, temperature=0)
-    structured_llm = llm.with_structured_output(TripQuery)
     user_block = user_text.strip()
     if conversation_context:
         user_block = (
@@ -648,11 +648,15 @@ def _invoke_extractor_model(
         "Do not invent origin city or dates. "
         "Parse passengers, budget, currency, layover preferences, and date flexibility when present."
     )
-    result = structured_llm.invoke(
-        [SystemMessage(content=system), HumanMessage(content=user_block)]
+    messages = [SystemMessage(content=system), HumanMessage(content=user_block)]
+    result, llm_metrics = stream_structured_output(
+        llm,
+        TripQuery,
+        messages,
+        stage="trip_extraction",
     )
     query = result if isinstance(result, TripQuery) else TripQuery.model_validate(result)
-    return query, {"model": model}
+    return query, {"model": model, "llm_metrics": llm_metrics}
 
 
 def extract_trip_query(
@@ -686,6 +690,7 @@ def extract_trip_query(
                 "query": query,
                 "score": score,
                 "error": None,
+                "llm_metrics": _llm_meta.get("llm_metrics"),
             }
         except Exception as exc:  # pragma: no cover - network/provider failures
             return {"model": model, "query": None, "score": 0.0, "error": str(exc)}
@@ -715,15 +720,18 @@ def extract_trip_query(
         )
         raise ValueError(f"Could not extract trip query. Errors: {errors}")
 
+    sel_metrics = selected.get("llm_metrics")
     metadata = {
         "used_model": selected["model"],
         "used_fallback": len(attempts) > 1,
         "fallback_reason": fallback_reason,
+        "extraction_llm_metrics": sel_metrics,
         "attempts": [
             {
                 "model": attempt["model"],
                 "score": attempt["score"],
                 "error": attempt["error"],
+                "llm_metrics": attempt.get("llm_metrics"),
             }
             for attempt in attempts
         ],

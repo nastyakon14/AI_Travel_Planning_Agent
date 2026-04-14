@@ -1,0 +1,136 @@
+{
+  "uid": "travel-ai-monitoring",
+  "title": "Travel Agent — LLM & planning",
+  "tags": ["travel", "prometheus"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Planning requests / s (по outcome и коду)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (outcome, http_code) (rate(travel_planning_requests_total[5m]))",
+          "legendFormat": "{{outcome}} {{http_code}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" } }
+    },
+    {
+      "id": 2,
+      "title": "Planning latency p50 / p95 (сек)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, outcome) (rate(travel_planning_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50 {{outcome}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, outcome) (rate(travel_planning_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95 {{outcome}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 3,
+      "title": "LLM: TTFT prefill (p95) vs decode phase (p95), сек",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, stage) (rate(travel_llm_prefill_seconds_bucket[5m])))",
+          "legendFormat": "TTFT p95 {{stage}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, stage) (rate(travel_llm_decode_phase_seconds_bucket[5m])))",
+          "legendFormat": "decode p95 {{stage}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 4,
+      "title": "LLM: ITL (inter-token) p95, сек/токен",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, stage) (rate(travel_llm_inter_token_latency_seconds_bucket[5m])))",
+          "legendFormat": "ITL p95 {{stage}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 5,
+      "title": "Токены / сек (input + output)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (stage) (rate(travel_llm_input_tokens_total[5m]))",
+          "legendFormat": "in {{stage}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (stage) (rate(travel_llm_output_tokens_total[5m]))",
+          "legendFormat": "out {{stage}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "tps" } }
+    },
+    {
+      "id": 6,
+      "title": "Стоимость LLM (USD/s по stage)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (stage) (rate(travel_llm_cost_usd_total[5m]))",
+          "legendFormat": "cost/s {{stage}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 6 } }
+    },
+    {
+      "id": 7,
+      "title": "CPU хоста (%) и RSS процесса (bytes)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "travel_host_cpu_percent",
+          "legendFormat": "CPU %",
+          "refId": "A"
+        },
+        {
+          "expr": "travel_process_resident_memory_bytes",
+          "legendFormat": "RSS",
+          "refId": "B"
+        }
+      ]
+    }
+  ]
+}

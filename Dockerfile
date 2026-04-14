@@ -9,6 +9,6 @@ COPY . .
 
 ENV PYTHONPATH=/app
 
-EXPOSE 8501
+EXPOSE 8501 9090
 
 CMD ["streamlit", "run", "streamlit_app.py", "--server.address=0.0.0.0", "--server.port=8501"]

@@ -1,0 +1,718 @@
+{
+  "uid": "travel-ai-analytics",
+  "title": "Travel Agent — Analytics Dashboard",
+  "tags": ["travel", "analytics", "business"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": { "from": "now-24h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "time_range",
+        "type": "interval",
+        "query": "5m,15m,30m,1h,6h,12h,24h",
+        "current": { "text": "1h", "value": "1h" },
+        "label": "Time Range"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 100,
+      "title": "📊 OVERVIEW — KPI Cards",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "id": 101,
+      "title": "Всего запросов",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(travel_planning_requests_total)",
+          "legendFormat": "requests"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 102,
+      "title": "Средняя латентность (сек)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(travel_planning_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 30 },
+              { "color": "red", "value": 60 }
+            ]
+          },
+          "unit": "s"
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 103,
+      "title": "Общая стоимость LLM (USD)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(travel_llm_cost_usd_total)",
+          "legendFormat": "cost"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "purple", "value": null }
+            ]
+          },
+          "unit": "currencyUSD",
+          "decimals": 4
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 104,
+      "title": "Среднее кол-во токенов (output)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(travel_llm_output_tokens_total[5m])) / sum(rate(travel_planning_requests_total[5m]))",
+          "legendFormat": "avg_out"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "orange", "value": null }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 105,
+      "title": "Средний бюджет (USD)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(travel_trip_budget_sum[5m])) / sum(rate(travel_trip_budget_count[5m]))",
+          "legendFormat": "avg_budget"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "text", "value": null }
+            ]
+          },
+          "unit": "currencyUSD",
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 106,
+      "title": "Success Rate (%)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(travel_planning_requests_total{outcome=\"ok\"}[5m])) / sum(rate(travel_planning_requests_total[5m])) * 100",
+          "legendFormat": "success%"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 70 },
+              { "color": "green", "value": 90 }
+            ]
+          },
+          "unit": "percent",
+          "decimals": 1
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "value"
+      }
+    },
+
+    {
+      "id": 200,
+      "title": "🌍 TRAVEL ANALYTICS — Города и направления",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "collapsed": false
+    },
+    {
+      "id": 201,
+      "title": "🏙️ Топ городов вылета",
+      "type": "bargauge",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "topk(10, sort_desc(travel_origin_city_total))",
+          "legendFormat": "{{city}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "short"
+        }
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["last"], "values": true }
+      }
+    },
+    {
+      "id": 202,
+      "title": "✈️ Топ городов назначения",
+      "type": "bargauge",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "topk(10, sort_desc(travel_destination_city_total))",
+          "legendFormat": "{{city}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "short"
+        }
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["last"], "values": true }
+      }
+    },
+    {
+      "id": 203,
+      "title": "🗺️ Популярные маршруты (origin → destination)",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "topk(15, sort_desc(travel_destination_city_total))",
+          "legendFormat": "{{city}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          }
+        }
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "Value", "desc": true }]
+      }
+    },
+
+    {
+      "id": 300,
+      "title": "💰 BUDGET & COST ANALYTICS",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 },
+      "collapsed": false
+    },
+    {
+      "id": 301,
+      "title": "Распределение бюджетов по категориям",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 23 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (budget_range) (rate(travel_outcome_with_budget_total[5m]))",
+          "legendFormat": "{{budget_range}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "short"
+        }
+      },
+      "options": {
+        "pieType": "donut",
+        "displayLabels": ["name", "percent"],
+        "legend": { "displayMode": "table", "placement": "right" }
+      }
+    },
+    {
+      "id": 302,
+      "title": "Итоговая стоимость поездок (USD) — распределение",
+      "type": "histogram",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 23 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(travel_total_trip_cost_usd_bucket[5m])",
+          "legendFormat": "{{le}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "currencyUSD"
+        }
+      }
+    },
+    {
+      "id": 303,
+      "title": "Бюджет vs Итоговая стоимость (сравнение)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 31 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(travel_trip_budget_sum[5m])) / sum(rate(travel_trip_budget_count[5m]))",
+          "legendFormat": "Avg Budget",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(travel_total_trip_cost_usd_sum[5m])) / sum(rate(travel_total_trip_cost_usd_count[5m]))",
+          "legendFormat": "Avg Actual Cost",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "currencyUSD"
+        }
+      }
+    },
+
+    {
+      "id": 400,
+      "title": "👥 PASSENGERS & TRIP DETAILS",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 39 },
+      "collapsed": false
+    },
+    {
+      "id": 401,
+      "title": "Распределение по кол-ву пассажиров",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (le) (increase(travel_trip_passengers_bucket[24h]))",
+          "legendFormat": "{{le}} passengers",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 402,
+      "title": "Длительность поездок (дни)",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (le) (increase(travel_trip_duration_days_bucket[24h]))",
+          "legendFormat": "{{le}} days",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 403,
+      "title": "Валюты запросов",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 48 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (currency) (rate(travel_trip_budget_count[5m]))",
+          "legendFormat": "{{currency}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "short"
+        }
+      },
+      "options": {
+        "pieType": "donut",
+        "displayLabels": ["name", "percent"],
+        "legend": { "displayMode": "table", "placement": "right" }
+      }
+    },
+    {
+      "id": 404,
+      "title": "Тип поиска (scope)",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 48 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (scope) (rate(travel_search_scope_total[5m]))",
+          "legendFormat": "{{scope}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "options": {
+        "pieType": "donut",
+        "displayLabels": ["name", "percent"]
+      }
+    },
+
+    {
+      "id": 500,
+      "title": "⚡ LLM PERFORMANCE METRICS",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 56 },
+      "collapsed": false
+    },
+    {
+      "id": 501,
+      "title": "LLM: TTFT prefill (p50/p95), сек",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 57 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, stage) (rate(travel_llm_prefill_seconds_bucket[5m])))",
+          "legendFormat": "p50 {{stage}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, stage) (rate(travel_llm_prefill_seconds_bucket[5m])))",
+          "legendFormat": "p95 {{stage}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "id": 502,
+      "title": "LLM: ITL inter-token latency (p95), сек/токен",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 57 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, stage) (rate(travel_llm_inter_token_latency_seconds_bucket[5m])))",
+          "legendFormat": "ITL p95 {{stage}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "id": 503,
+      "title": "Токены / сек (input vs output)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 65 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (stage) (rate(travel_llm_input_tokens_total[5m]))",
+          "legendFormat": "input {{stage}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (stage) (rate(travel_llm_output_tokens_total[5m]))",
+          "legendFormat": "output {{stage}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "tps"
+        }
+      }
+    },
+    {
+      "id": 504,
+      "title": "Стоимость LLM (USD/s по stage)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 65 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (stage) (rate(travel_llm_cost_usd_total[5m]))",
+          "legendFormat": "cost/s {{stage}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "none",
+          "decimals": 6
+        }
+      }
+    },
+    {
+      "id": 505,
+      "title": "Скорость генерации (токенов/сек)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 73 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(travel_generation_tokens_per_sec_sum[5m]) / rate(travel_generation_tokens_per_sec_count[5m])",
+          "legendFormat": "avg tps",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 506,
+      "title": "Кол-во токенов в ответе (маршрут)",
+      "type": "histogram",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 73 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(travel_response_token_count_bucket[5m])",
+          "legendFormat": "{{le}} tokens",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        }
+      }
+    },
+
+    {
+      "id": 600,
+      "title": "🔄 SYSTEM & RELIABILITY",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 81 },
+      "collapsed": false
+    },
+    {
+      "id": 601,
+      "title": "Planning requests / s (по outcome и коду)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 82 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (outcome, http_code) (rate(travel_planning_requests_total[5m]))",
+          "legendFormat": "{{outcome}} {{http_code}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "ops"
+        }
+      }
+    },
+    {
+      "id": 602,
+      "title": "Planning latency p50 / p95 (сек)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 82 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, outcome) (rate(travel_planning_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50 {{outcome}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, outcome) (rate(travel_planning_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95 {{outcome}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "id": 603,
+      "title": "Guardrail Retries (распределение)",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 90 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (le) (increase(travel_guardrail_retries_bucket[24h]))",
+          "legendFormat": "{{le}} retries",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        }
+      }
+    },
+    {
+      "id": 604,
+      "title": "CPU хоста (%) и RSS процесса (MB)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 90 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "travel_host_cpu_percent",
+          "legendFormat": "CPU %",
+          "refId": "A"
+        },
+        {
+          "expr": "travel_process_resident_memory_bytes / 1024 / 1024",
+          "legendFormat": "RSS MB",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        }
+      }
+    }
+  ]
+}

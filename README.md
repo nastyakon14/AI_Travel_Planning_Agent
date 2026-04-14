@@ -2,11 +2,13 @@
 
 PoC агентной системы для планирования поездок: извлечение параметров из текста (LLM), поиск рейсов и отелей ([Travelpayouts](https://www.travelpayouts.com/) / Aviasales API), подсказки по достопримечательностям, генерация маршрута в Markdown и проверка бюджета. Оркестрация — **LangGraph** (`backend/agent_graph.py`); LLM — **LangChain `ChatOpenAI`** к OpenAI-совместимому HTTP API (`AGENTPLATFORM_API_BASE`), без пакета LiteLLM.
 
+**Мониторинг:** Prometheus + Grafana дашборды, Langfuse трассировка с автоматическими score-метриками и dataset-экспериментами.
+
 ---
 
-## Схема работы агента (LangGraph)
+## Архитектура агента
 
-Граф собирается в `build_graph()`: узлы и условные переходы совпадают с реализацией.
+### Схема работы (LangGraph)
 
 ```mermaid
 flowchart TD
@@ -24,33 +26,115 @@ flowchart TD
     finalize_warn --> END
 ```
 
-Кратко по шагам:
+### Компоненты системы
 
-1. **extract** — `extract_trip_query()`: структура `TripQuery` из текста; при нарушении guardrails — выход.
-2. **validate** — если бюджет задан и выглядит несовместимым с длительностью — `early_exit` с сообщением.
-3. **fetch_data** — по области поиска (`detect_search_scope`): Travelpayouts для рейсов/отелей; достопримечательности — `suggest_city_attractions()` (LLM).
-4. **generate** — `generate_travel_itinerary`: маршрут по дням в Markdown.
-5. **guardrail** — оценка «перелёт + отель×ночи» vs бюджет; при превышении — **до N** попторов (`TRAVEL_GUARDRAIL_MAX_RETRIES`, по умолчанию 3) с ужесточением лимита отелей через `budget_multiplier`.
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      Streamlit UI (8501)                         │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │               travel_facade.py                             │  │
+│  │  ┌─────────────────────────────────────────────────────┐  │  │
+│  │  │          LangGraph (agent_graph.py)                  │  │  │
+│  │  │  ┌─────────┐ ┌──────────┐ ┌───────────┐ ┌────────┐  │  │  │
+│  │  │  │ extract  │→│ validate │→│ fetch_data │→│generate│  │  │  │
+│  │  │  └─────────┘ └──────────┘ └───────────┘ └────────┘  │  │  │
+│  │  │       ↓                              ↓               │  │  │
+│  │  │  ┌──────────┐ ┌──────────┐ ┌──────────────┐         │  │  │
+│  │  │  │guardrail │→│retry_patch│→│  finalize    │         │  │  │
+│  │  │  └──────────┘ └──────────┘ └──────────────┘         │  │  │
+│  │  └─────────────────────────────────────────────────────┘  │  │
+│  │                                                             │  │
+│  │  LLM Observability │ Prometheus │ Langfuse                  │  │
+│  └───────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+         ↓                    ↓                    ↓
+   Travelpayouts         Prometheus:9090      Langfuse Cloud
+   (рейсы/отели)         /metrics             (traces/scores)
+```
 
-Состояние сессии в PoC: **MemorySaver** (in-process), ключ потока `thread_id` в `run_travel_planning_graph`.
+### Кратко по шагам графа
+
+| Узел | Назначение | Langfuse Span |
+|------|-----------|---------------|
+| `extract` | Извлечение `TripQuery` из текста, guardrails | ✅ `extract_intent` |
+| `validate` | Эвристика бюджета/длительности | ✅ `validate_constraints` |
+| `fetch_data` | Рейсы + отели (Travelpayouts), достопримечательности (LLM) | ✅ `fetch_data` |
+| `generate` | Генерация маршрута в Markdown | ✅ `generate_itinerary` |
+| `guardrail` | Проверка: перелёт + отель×ночи ≤ бюджет | ✅ `budget_guardrail` |
+| `retry_patch` | budget_multiplier × 0.85, повторный поиск | — |
+| `finalize` | Формирование итогового Markdown | — |
+
+Состояние сессии: **MemorySaver** (in-process), изоляция по `thread_id`.
 
 ---
 
 ## Инструменты агента (`backend/agent_tools.py`)
 
-Инструменты оформлены как LangChain `@tool` и собраны в `AGENT_TOOL_FUNCTIONS`. Дополнительно `get_extended_tool_list()` добавляет NL-обёртки из `travel_agent` для совместимости с UI.
+| Инструмент | Назначение | LLM |
+|------------|-----------|-----|
+| `search_flights` | Авиапоиск по городам/датам (Travelpayouts) | — |
+| `search_hotels` | Поиск отелей по городу/датам | — |
+| `search_attractions` | Идеи мест в городе (LLM) | ✅ `city_attractions` |
+| `extract_travel_requirements` | Извлечение `TripQuery` из текста | ✅ `trip_extraction` |
+| `check_travel_budget` | Проверка бюджета | — |
+| `generate_travel_itinerary` | Генерация Markdown-маршрута | ✅ `travel_itinerary` |
+| `validate_travel_constraints` | Эвристика «бюджет vs дни» | — |
 
-| Инструмент | Назначение |
-|------------|------------|
-| `search_flights` | Авиапоиск по городам и датам (через `search_routes_from_extracted` / Travelpayouts). |
-| `search_hotels` | Поиск отелей по городу и датам заезда/выезда. |
-| `search_attractions` | Идеи мест в городе (обёртка над логикой достопримечательностей). |
-| `extract_travel_requirements` | Извлечение `TripQuery` из свободного текста. |
-| `check_travel_budget` | Сводка и проверка бюджета по извлечённым данным. |
-| `generate_travel_itinerary` | Генерация Markdown-маршрута через LLM. |
-| `validate_travel_constraints` | Лёгкая эвристика «бюджет vs дни» без внешних API. |
+---
 
-Расширенный список: `search_routes_from_text`, `search_hotels_from_text`, `search_travel_from_text`.
+## Мониторинг и наблюдаемость
+
+### Prometheus метрики
+
+| Тип | Метрики |
+|-----|---------|
+| **Планирование** | requests total, duration (p50/p95), outcome, HTTP codes |
+| **LLM Performance** | TTFT (prefill), decode phase, ITL (inter-token), input/output tokens, cost USD |
+| **Бизнес-метрики** | пассажиры, бюджет (по валютам), длительность, города вылета/назначения, retry count, итоговая стоимость |
+| **Системные** | CPU %, RSS памяти |
+
+### Grafana дашборды
+
+**1. Travel Agent — LLM & planning** (`travel-monitoring.json`)
+- Planning requests rate (ops)
+- Planning latency p50/p95
+- LLM TTFT prefill vs decode (p95)
+- LLM inter-token latency (p95)
+- Токены/сек (input + output)
+- Стоимость LLM (USD/s)
+- CPU и RSS
+
+**2. Travel Agent — Analytics Dashboard** (`travel-analytics.json`)
+- 📊 **KPI Cards:** запросы, латентность, стоимость LLM, токены, бюджет, success rate
+- 🌍 **Travel Analytics:** топ городов вылета/назначения, маршруты
+- 💰 **Budget & Cost:** распределение бюджетов, итоговая стоимость, бюджет vs реальная стоимость
+- 👥 **Passengers & Trip Details:** пассажиры, длительность, валюты, тип поиска
+- ⚡ **LLM Performance:** TTFT, ITL, токены/сек, скорость генерации
+- 🔄 **System & Reliability:** requests rate, latency, guardrail retries, CPU/RSS
+
+### Langfuse трассировка
+
+| Возможность | Описание |
+|-------------|----------|
+| **Trace** | Полный вызов графа (extract → validate → fetch → generate → guardrail) |
+| **Spans** | Каждый узел графа — отдельный span с metadata |
+| **Generations** | LLM-вызовы с промптами, ответами, токенами |
+| **Score-метрики** | `budget_compliance` (0-1), `latency_rating`, `success_score` |
+| **Datasets** | Автоматическое сохранение пар запрос/ответ для A/B тестирования |
+
+Запуск мониторинга:
+```bash
+docker compose --profile monitoring up --build
+```
+
+| Сервис | URL |
+|--------|-----|
+| Streamlit UI | `http://localhost:8501` |
+| Prometheus metrics | `http://localhost:9090/metrics` |
+| Prometheus UI | `http://localhost:9091` |
+| Grafana | `http://localhost:3000` |
+
+Подробнее: [monitoring/README.md](monitoring/README.md)
 
 ---
 
@@ -67,15 +151,10 @@ flowchart TD
 pip install -r requirements.txt
 ```
 
-Создайте `.env` в корне (или экспортируйте переменные):
-
-```env
-AGENTPLATFORM_API_KEY=...
-AGENTPLATFORM_API_BASE=https://litellm.tokengate.ru/v1
-TRAVELPAYOUTS_API_TOKEN=...
-# Имена моделей — как у провайдера / GET {AGENTPLATFORM_API_BASE}/v1/models
-TRIP_EXTRACTION_FAST_MODEL=gpt-4o-mini
-TRIP_EXTRACTION_STRONG_MODEL=gpt-4o
+Создайте `.env` из шаблона:
+```bash
+cp .env.example .env
+# Отредактируйте .env — вставьте ключи
 ```
 
 ```bash
@@ -84,44 +163,65 @@ streamlit run streamlit_app.py
 
 Откройте URL из вывода (обычно `http://localhost:8501`).
 
+### Тесты
+
+```bash
+make test
+# или
+python -m pytest tests/ -v
+```
+
+CI: [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — pytest + проверка импорта `build_graph()`.
+
 ### Docker
 
 ```bash
+# Только UI
 docker compose up --build
+
+# UI + полный стек мониторинга
+docker compose --profile monitoring up --build
 ```
 
-- UI: `http://localhost:8501` (`UI_PORT`). Один контейнер: Streamlit + LangGraph в одном процессе.
-
-Переменные — из `.env` рядом с `docker-compose.yml`.
+Переменные окружения берутся из `.env` рядом с `docker-compose.yml`.
 
 ---
 
-## Документация в репозитории
+## Документация
 
 | Файл | Содержание |
 |------|------------|
-| [docs/architecture-microservices.md](docs/architecture-microservices.md) | Один процесс, Docker |
-| [docs/system-design.md](docs/system-design.md) | Архитектура PoC (актуализировано под код) |
-| [docs/specs/tools-APIs.md](docs/specs/tools-APIs.md) | Контракты тулов и таймауты |
-| [docs/specs/agent-orchestrator.md](docs/specs/agent-orchestrator.md) | Узлы LangGraph |
-| [docs/diagrams/workflow.mmd](docs/diagrams/workflow.mmd) | Диаграмма (Mermaid-совместимая схема) |
-| [docs/product-proposal.md](docs/product-proposal.md) | Продуктовое видение PoC |
-| [docs/governance.md](docs/governance.md) | Риски и политика данных (общая) |
-| [docs/specs/observability-evals.md](docs/specs/observability-evals.md) | Метрики и evals |
-
-Диаграммы C4 и поток данных: [docs/diagrams/](docs/diagrams/) (`c4-context.mmd`, `c4-container.mmd`, `data-flow.mmd`).
+| [docs/system-design.md](docs/system-design.md) | Полная архитектура PoC: модули, flow, состояние |
+| [docs/architecture-microservices.md](docs/architecture-microservices.md) | Deployment: один процесс, Docker |
+| [docs/product-proposal.md](docs/product-proposal.md) | Продуктовое видение, success-метрики |
+| [docs/governance.md](docs/governance.md) | Риски, PII, prompt injection защита |
+| [docs/specs/agent-orchestrator.md](docs/specs/agent-orchestrator.md) | Узлы LangGraph, conditional edges, retry |
+| [docs/specs/memory-context.md](docs/specs/memory-context.md) | MemorySaver, thread_id, TravelPlanningState |
+| [docs/specs/tools-APIs.md](docs/specs/tools-APIs.md) | Tool контракты, таймауты |
+| [docs/specs/observability-evals.md](docs/specs/observability-evals.md) | LLM метрики, Prometheus, Langfuse, evals |
+| [docs/specs/serving-config.md](docs/specs/serving-config.md) | Env vars, deployment, model versions |
+| [docs/specs/retriever.md](docs/specs/retriever.md) | RAG не реализован; альтернатива — LLM |
+| [docs/diagrams/](docs/diagrams/) | C4 diagrams (context, container), data-flow, workflow |
+| [monitoring/README.md](monitoring/README.md) | Prometheus, Grafana дашборды, Langfuse интеграция |
 
 ---
 
-## Ссылки на технологии
+## Технологии
 
-- [LangGraph](https://langchain-ai.github.io/langgraph/) — граф состояний и чекпоинты  
-- [LangChain OpenAI](https://python.langchain.com/docs/integrations/chat/openai/) — `ChatOpenAI` + `base_url`  
-- [Streamlit](https://docs.streamlit.io/) — UI  
-- [Travelpayouts / Aviasales API](https://support.travelpayouts.com/hc/en-us/articles/203956163-Aviasales-Travelpayouts-API) — рейсы и отели (read-only, без бронирования)
+- **[LangGraph](https://langchain-ai.github.io/langgraph/)** — граф состояний, чекпоинты (MemorySaver)
+- **[LangChain](https://python.langchain.com/)** — `ChatOpenAI` + `base_url` (OpenAI-совместимый API)
+- **[Streamlit](https://docs.streamlit.io/)** — веб-интерфейс с дашбордами
+- **[Travelpayouts / Aviasales](https://support.travelpayouts.com/)** — рейсы и отели (read-only)
+- **[Pydantic](https://docs.pydantic.dev/)** — валидация данных (`TripQuery`)
+- **[Prometheus](https://prometheus.io/)** + **[Grafana](https://grafana.com/)** — метрики и дашборды
+- **[Langfuse](https://langfuse.com/)** — трассировка LLM, scores, datasets
+- **[Plotly](https://plotly.com/)** — интерактивные графики цен
+- **[Folium](https://python-visualization.github.io/folium/)** — карта достопримечательностей (OpenStreetMap)
 
 ---
 
 ## Ограничения PoC
 
-Нет реального бронирования и оплаты; оценки бюджета ориентировочные; покрытие городов и API зависит от Travelpayouts и настроек ключа.
+- Нет реального бронирования и оплаты
+- Оценки бюджета ориентировочные
+- Покрытие городов и API зависит от Travelpayouts

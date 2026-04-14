@@ -3,21 +3,17 @@ graph TD
 
     subgraph hosts["Хост / Docker"]
         UI[ui: Streamlit]
-        API[api: FastAPI]
     end
 
     User -->|HTTP 8501| UI
-    User -->|HTTP 8080| API
 
-    subgraph core["Общий код backend"]
+    subgraph core["backend в процессе Streamlit"]
         Graph[LangGraph agent_graph]
         Tools[agent_tools / travel_agent]
     end
 
     UI --> Graph
     UI --> Tools
-    API --> Graph
-    API --> Tools
 
     Tools --> TP[Travelpayouts API]
     Tools --> LLM[LLM HTTP AGENTPLATFORM_API_BASE]
